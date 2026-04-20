@@ -47,14 +47,10 @@ def nothing(x):
     pass
 
 def real_time_image_processing(image_path):
-    folder_path = './results-2024-09-30-12-56-58'
-    files = os.listdir(folder_path)
-    files = [f for f in files if os.path.isfile(os.path.join(folder_path, f))]
-    file = files[0]
-    image_path = (folder_path + "\\" +  file)
-
     # Load the image
     image = cv2.imread(image_path)
+    if image is None:
+        raise FileNotFoundError(f"Could not load image: {image_path}")
     
     # Resize the image to fit smaller windows (adjust this as necessary)
     scale_percent = 20  # Percentage of original size
@@ -155,7 +151,7 @@ def real_time_image_processing(image_path):
     cv2.destroyAllWindows()
 
 # Path to the image you want to process
-image_path = 'path_to_your_image.jpg'
+image_path = '.\\pictures_rect\\PXL_20260326_100705089.jpg'
 
 # Call the function
 real_time_image_processing(image_path)
