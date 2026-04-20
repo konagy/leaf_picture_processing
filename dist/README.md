@@ -1,199 +1,156 @@
-# Leaf Picture Processing
+# Leaf Picture Processing Executable
 
-OpenCV-based tooling for processing photos that contain two leaves, separating them from the background, and measuring pale or damaged areas on each leaf.
+This folder contains the packaged Windows executable for interactive leaf picture processing.
 
-The current main workflow is interactive:
+Main file:
 
-1. Choose a folder that contains the input pictures.
-2. Step through the pictures one by one.
-3. Adjust the mask and spot thresholds in the GUI for the current image.
-4. Accept, skip, or stop.
-5. Save split leaf images, processed previews, and a CSV summary.
+- `leaf-picture-processing.exe`
 
-## Main script
+## What It Does
 
-Use [`picture_processing_oulema.py`](./picture_processing_oulema.py).
+The executable helps you process photos that contain two leaves.
 
-What it does:
+For each picture it:
 
-- opens a folder picker if no input folder is given on the command line
-- iterates through all supported images in that folder
-- opens a calibration GUI before each image is processed
-- segments the two largest green leaf contours
-- saves the two leaf cutouts as `*_leaf1.jpg` and `*_leaf2.jpg`
-- detects bright or pale spots on each extracted leaf using a grayscale threshold
-- writes the measurements to a CSV file in a timestamped results folder
-
-## Requirements
-
-Install:
-
-```bash
-pip install opencv-python numpy
-```
-
-The script also uses standard-library modules such as `argparse`, `csv`, `pathlib`, `subprocess`, and `time`.
+1. lets you choose or confirm the leaf mask with sliders
+2. shows the detected `Leaf 1` and `Leaf 2` contours
+3. detects pale or damaged spots on each leaf
+4. saves output images and a CSV summary
 
 ## How To Run
 
-### Pick the folder interactively
-
-```bash
-python picture_processing_oulema.py
-```
-
-This opens a folder picker and lets you choose the folder with leaf pictures.
-
-### Pass the folder on the command line
-
-```bash
-python picture_processing_oulema.py ./pictures_rect
-```
-
-### Optional starting values
-
-You can also provide initial values for the sliders:
-
-```bash
-python picture_processing_oulema.py ./pictures_rect --lh 36 --ls 25 --lv 25 --uh 86 --us 255 --uv 255 --epsilon 10 --spot-threshold 115
-```
-
-## Build A Windows Executable
-
-If `PyInstaller` is available in the environment, build the executable with:
-
-```powershell
-.\build_exe.ps1
-```
-
-The generated executable will be:
+Double-click:
 
 ```text
-dist\leaf-picture-processing.exe
+leaf-picture-processing.exe
 ```
 
-## GUI Workflow
+Or run it from PowerShell:
 
-For each picture, the script opens:
+```powershell
+.\leaf-picture-processing.exe
+```
 
-- `Threshold Setup`: the main preview window
-- `Controls`: the slider window
+If you run it without arguments, it opens a folder picker so you can choose the folder that contains the leaf pictures.
+
+You can also pass the input folder directly:
+
+```powershell
+.\leaf-picture-processing.exe .\pictures_rect
+```
+
+## Optional Arguments
+
+You can provide starting values for the sliders:
+
+```powershell
+.\leaf-picture-processing.exe .\pictures_rect --lh 36 --ls 25 --lv 25 --uh 86 --us 255 --uv 255 --epsilon 10 --spot-threshold 115
+```
+
+Useful options:
+
+- `--output-root`: choose where the timestamped results folder will be created. If you do not set this, the results folder is created in the current working directory.
+- `--lh`: initial minimum hue for the green mask. Lower values include more yellow-green tones. Raise it if warm background colors are entering the leaf mask.
+- `--ls`: initial minimum saturation for the green mask. Raise it to reject gray or washed-out background pixels. Lower it if pale leaf tissue is being excluded.
+- `--lv`: initial minimum brightness for the green mask. Raise it to remove dark shadow regions from the mask. Lower it if darker leaf areas disappear.
+- `--uh`: initial maximum hue for the green mask. Raise it if more yellow-green leaf parts should be included. Lower it if non-leaf warm tones are leaking in.
+- `--us`: initial maximum saturation for the green mask. This usually stays high. Lower it only if highly saturated artifacts should be excluded.
+- `--uv`: initial maximum brightness for the green mask. Keep it high for bright or glossy pictures. Lower it if glare should not count as part of the leaf.
+- `--epsilon`: initial contour smoothness. Higher values simplify the leaf outline more strongly. Lower it if the contour becomes too rough or loses important shape details.
+- `--spot-threshold`: initial brightness threshold for pale-spot detection. Lower it to detect more pale or damaged regions. Raise it if too many normal leaf areas are marked as spots.
+
+To see the built-in help:
+
+```powershell
+.\leaf-picture-processing.exe --help
+```
+
+## GUI Windows
+
+For each image, the program opens:
+
+- `Threshold Setup`: main preview window
+- `Controls`: slider window
 
 The main preview shows:
 
 - the original image
-- the original image with detected contours and `Leaf 1` / `Leaf 2` labels
+- the original image with detected contours and large `Leaf 1` / `Leaf 2` labels
 - the binary leaf mask
-- per-leaf spot preview panels with leaf area, spot area, and spot percentage
+- per-leaf spot preview panels with measurements
 
-Keyboard controls:
+## Keyboard Controls
 
-- `Enter` or `q`: accept the current values and process the image
+- `Enter` or `q`: accept current values and process the image
 - `s`: skip the current image
-- `Esc`: stop the full session
+- `Esc`: stop the session
 
-## Slider Guide
-
-These sliders mainly control two stages:
-
-- leaf masking: deciding which pixels belong to the leaf
-- spot detection: deciding which bright pixels on the leaf count as damage or pale tissue
+## Slider Meaning
 
 ### Min Hue
 
-- Lower boundary of the accepted green color range.
-- Raise it if yellow or brown background starts being included in the leaf mask.
-- Lower it if green leaf edges disappear.
+- Lower limit of the green color range.
+- Lower it if parts of the leaf are missing.
+- Raise it if yellow or brown background enters the mask.
 
 ### Min Saturation
 
-- Minimum color strength for a pixel to be considered leaf.
-- Raise it to reject pale paper background, gray shadows, or weak reflections.
-- Lower it if faded or washed-out green leaf regions are being lost.
+- Rejects pale gray or weak-color pixels from the leaf mask.
+- Lower it if faded leaf tissue disappears.
+- Raise it if background gets included.
 
 ### Min Brightness
 
-- Minimum brightness for a pixel to be considered leaf.
-- Raise it if dark background regions are leaking into the mask.
-- Lower it if darker leaf tissue is being removed.
+- Rejects dark pixels from the leaf mask.
+- Lower it if dark leaf regions are missing.
+- Raise it if shadows are entering the mask.
 
 ### Max Hue
 
-- Upper boundary of the accepted green color range.
-- Raise it if yellow-green leaf areas should still belong to the mask.
-- Lower it if warm non-leaf tones are entering the mask.
+- Upper limit of the green color range.
+- Raise it if yellow-green leaf parts should be included.
+- Lower it if non-leaf warm tones enter the mask.
 
 ### Max Saturation
 
-- Maximum color strength allowed for the leaf mask.
-- In many cases this can stay high.
-- Lower it only if very saturated artifacts or reflections are incorrectly accepted.
+- Upper saturation limit for accepted leaf pixels.
+- Usually this can stay high.
 
 ### Max Brightness
 
-- Maximum brightness allowed for the leaf mask.
-- Keep it high if the image contains strong lighting or glossy leaves.
-- Lower it if very bright glare should be excluded from the contour.
+- Upper brightness limit for accepted leaf pixels.
+- Lower it only if strong glare should be excluded.
 
 ### Contour Smoothness
 
-- Controls how strongly the detected leaf outline is simplified.
-- Higher values make the contour smoother and less detailed.
-- Lower it if the outline becomes too rough or important shape details disappear.
-- Raise it if the contour is noisy and jagged.
+- Controls how much the contour is simplified.
+- Raise it for smoother outlines.
+- Lower it if too much leaf shape detail is lost.
 
 ### Spot Threshold
 
-- Controls how bright a pixel must be to count as a pale spot on the leaf.
-- Lower it to detect more light or pale areas.
-- Raise it if too much healthy texture is being marked as damaged.
-
-## Practical Tuning Tips
-
-- If the mask is too small, first lower `Min Saturation` or `Min Brightness`.
-- If the mask is too large, first raise `Min Saturation` or `Min Brightness`.
-- If leaf edges are missing, widen the hue range by lowering `Min Hue` or raising `Max Hue`.
-- If the contour is noisy, increase `Contour Smoothness`.
-- If too many pale regions are marked, raise `Spot Threshold`.
-- If too few pale regions are marked, lower `Spot Threshold`.
+- Controls how bright a region must be to count as a pale spot.
+- Lower it to detect more spots.
+- Raise it to reduce false positives.
 
 ## Output
 
-Each run creates a new timestamped results folder such as:
+Each run creates a timestamped results folder in the selected output location, for example:
 
-- `results-2026-04-20-15-38-01`
+```text
+results-2026-04-20-16-00-00
+```
 
-Inside that folder you will find:
+Typical output files:
 
-- a CSV summary file
-- extracted leaves
-- processed preview images
-- threshold-based spot images
-
-Typical filenames:
-
-- `results-YYYY-MM-DD-HH-MM-SS/results-YYYY-MM-DD-HH-MM-SS.csv`
+- `results-YYYY-MM-DD-HH-MM-SS.csv`
 - `image_leaf1.jpg`
 - `image_leaf2.jpg`
 - `image_leaf1_processing.jpg`
 - `image_leaf1-green_object.jpg`
 
-## CSV Measurements
+## Notes
 
-The measurements are pixel-based, not physical units.
-
-Each CSV row contains:
-
-- image name
-- total leaf area in pixels
-- detected spot area in pixels
-- spotted area percentage
-- threshold used for spot detection
-
-## Current Limitations
-
-- Input images are expected to contain two main leaves.
-- Leaf extraction depends strongly on the selected HSV thresholds.
-- Spot detection is based on grayscale brightness, so lighting still matters.
-- Results are measured in pixels and are not calibrated to real-world area.
-- Very unusual backgrounds or overlapping leaves may still need manual tuning.
+- The tool expects two main leaves in each image.
+- Results are measured in pixels, not physical units.
+- Lighting and background quality still affect the result, so manual tuning may be needed.
