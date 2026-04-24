@@ -10,4 +10,4 @@ results-envelope-*/
 *.pyz
 *.zip
 *.pkg
-build/*.toc
+/build
