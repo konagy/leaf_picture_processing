@@ -13,8 +13,8 @@ SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 PREVIEW_DEBOUNCE_SECONDS = 0.08
 TOP_PANEL_WIDTH = 560
 TOP_PANEL_HEIGHT = 336
-BOTTOM_PANEL_WIDTH = 840
-BOTTOM_PANEL_HEIGHT = 384
+BOTTOM_PANEL_WIDTH = 1008
+BOTTOM_PANEL_HEIGHT = 461
 TRACKBAR_NAMES = {
     "lh": "Min Hue",
     "ls": "Min Saturation",
@@ -176,7 +176,13 @@ def segment_two_leaves(
 
 
 def place_on_black_background(image: np.ndarray) -> np.ndarray:
-    return np.where(image == 0, np.zeros_like(image), image)
+    background_color = np.array([79, 152, 243], dtype=np.uint8)
+    return np.where(image == 0, background_color, image)
+
+
+def place_on_gray_background(image: np.ndarray) -> np.ndarray:
+    background_color = np.array([160, 160, 160], dtype=np.uint8)
+    return np.where(image == 0, background_color, image)
 
 
 def detect_spots(leaf_image: np.ndarray, threshold: int) -> Tuple[np.ndarray, int, int, float]:
@@ -229,22 +235,11 @@ def draw_leaf_labels(image: np.ndarray, contours: Sequence[np.ndarray]) -> None:
             label,
             (center_x - 140, center_y + 20),
             cv2.FONT_ITALIC,
-            3.0,
-            (0, 0, 0),
+            4.0,
+            (0, 255, 255),
             12,
             cv2.LINE_AA,
         )
-        cv2.putText(
-            image,
-            label,
-            (center_x - 140, center_y + 20),
-            cv2.FONT_ITALIC,
-            3.0,
-            (0, 255, 255),
-            6,
-            cv2.LINE_AA,
-        )
-
 
 def build_calibration_preview(
     image: np.ndarray,
@@ -262,26 +257,29 @@ def build_calibration_preview(
 
     contour_overlay = image.copy()
     if approx_contours:
-        cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 5)
+        cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 20)
         draw_leaf_labels(contour_overlay, approx_contours)
     contour_panel = resize_to_fit(contour_overlay, TOP_PANEL_WIDTH, TOP_PANEL_HEIGHT)
-    cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 255, 255), 2)
+    cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (50, 144, 66), 2)
 
-    leaf_panels: List[np.ndarray] = []
+    combined_panels: List[np.ndarray] = []
+    spot_panels: List[np.ndarray] = []
     for index, leaf_image in enumerate(leaf_images, start=1):
         spots_image, all_area, spot_area, percentage = detect_spots(leaf_image, spot_threshold)
         combined = cv2.addWeighted(place_on_black_background(leaf_image), 0.75, spots_image, 0.95, 0.0)
         combined_panel = resize_to_fit(combined, BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
-        cv2.putText(combined_panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
-        cv2.putText(combined_panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
-        cv2.putText(combined_panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
-        cv2.putText(combined_panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
-        leaf_panels.append(combined_panel)
+        cv2.putText(combined_panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 0, 0), 2)
+        cv2.putText(combined_panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
+        cv2.putText(combined_panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
+        cv2.putText(combined_panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
+        combined_panels.append(combined_panel)
 
-        spot_panel = resize_to_fit(spots_image, BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
-        cv2.putText(spot_panel, f"Leaf {index} Spots", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
-        cv2.putText(spot_panel, f"Threshold: {spot_threshold}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
-        leaf_panels.append(spot_panel)
+        spot_panel = resize_to_fit(place_on_gray_background(spots_image), BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
+        cv2.putText(spot_panel, f"Leaf {index} Spots", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (50, 144, 66), 2)
+        cv2.putText(spot_panel, f"Threshold: {spot_threshold}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (50, 144, 66), 2)
+        spot_panels.append(spot_panel)
+
+    leaf_panels = combined_panels + spot_panels
 
     if not leaf_panels:
         empty = np.zeros((240, 700, 3), dtype=np.uint8)
@@ -312,13 +310,13 @@ def build_calibration_preview(
         f"File: {image_name}",
         (20, 40),
         cv2.FONT_ITALIC,
-        0.9,
-        (255, 255, 255),
+        picSize*0.9,
+        (50, 144, 66),
         2,
     )
     cv2.putText(
         preview,
-        "Enter/q: accept | s: skip image | Esc: stop session",
+        "Enter: accept | s: skip image | Esc: stop session",
         (20, preview.shape[0] - 20),
         cv2.FONT_ITALIC,
         0.8,
@@ -402,7 +400,7 @@ def calibrate_image(
 
         cv2.imshow("Threshold Setup", preview)
         key = cv2.waitKey(15) & 0xFF
-        if key in (13, ord("q")):
+        if key == 13:       # if key in (13, ord("q"))
             action = "accept"
             break
         if key == ord("s"):
