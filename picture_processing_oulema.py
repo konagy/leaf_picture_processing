@@ -11,6 +11,10 @@ import numpy as np
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 PREVIEW_DEBOUNCE_SECONDS = 0.08
+TOP_PANEL_WIDTH = 560
+TOP_PANEL_HEIGHT = 336
+BOTTOM_PANEL_WIDTH = 840
+BOTTOM_PANEL_HEIGHT = 384
 TRACKBAR_NAMES = {
     "lh": "Min Hue",
     "ls": "Min Saturation",
@@ -251,42 +255,44 @@ def build_calibration_preview(
     epsilon_factor: float,
     spot_threshold: int,
 ) -> np.ndarray:
-    mask, _, approx_contours, leaf_images = segment_two_leaves(image, hsv_image, lower_green, upper_green, epsilon_factor)
+    _, _, approx_contours, leaf_images = segment_two_leaves(image, hsv_image, lower_green, upper_green, epsilon_factor)
 
     picSize = 0.6
-    original_panel = resize_to_fit(image, 700, 420)
-    mask_panel = cv2.cvtColor(resize_to_fit(mask, 700, 420), cv2.COLOR_GRAY2BGR)
-    cv2.putText(mask_panel, "Leaf Mask", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 255, 0), 2)
+    original_panel = resize_to_fit(image, TOP_PANEL_WIDTH, TOP_PANEL_HEIGHT)
 
     contour_overlay = image.copy()
     if approx_contours:
         cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 5)
         draw_leaf_labels(contour_overlay, approx_contours)
-    contour_panel = resize_to_fit(contour_overlay, 700, 420)
+    contour_panel = resize_to_fit(contour_overlay, TOP_PANEL_WIDTH, TOP_PANEL_HEIGHT)
     cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 255, 255), 2)
 
     leaf_panels: List[np.ndarray] = []
     for index, leaf_image in enumerate(leaf_images, start=1):
         spots_image, all_area, spot_area, percentage = detect_spots(leaf_image, spot_threshold)
         combined = cv2.addWeighted(place_on_black_background(leaf_image), 0.75, spots_image, 0.95, 0.0)
-        panel = resize_to_fit(combined, 700, 320)
-        cv2.putText(panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
-        cv2.putText(panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
-        cv2.putText(panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
-        cv2.putText(panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
-        leaf_panels.append(panel)
+        combined_panel = resize_to_fit(combined, BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
+        cv2.putText(combined_panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
+        cv2.putText(combined_panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
+        cv2.putText(combined_panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
+        cv2.putText(combined_panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
+        leaf_panels.append(combined_panel)
+
+        spot_panel = resize_to_fit(spots_image, BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
+        cv2.putText(spot_panel, f"Leaf {index} Spots", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
+        cv2.putText(spot_panel, f"Threshold: {spot_threshold}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
+        leaf_panels.append(spot_panel)
 
     if not leaf_panels:
         empty = np.zeros((240, 700, 3), dtype=np.uint8)
         cv2.putText(empty, "Could not isolate two leaves with current HSV values.", (20, 120), cv2.FONT_ITALIC, picSize*0.9, (0, 0, 255), 2)
         leaf_panels = [empty]
 
-    top_row_height = max(original_panel.shape[0], contour_panel.shape[0], mask_panel.shape[0])
+    top_row_height = max(original_panel.shape[0], contour_panel.shape[0])
     top_row = cv2.hconcat(
         [
             pad_to_height(original_panel, top_row_height),
             pad_to_height(contour_panel, top_row_height),
-            pad_to_height(mask_panel, top_row_height),
         ]
     )
 
