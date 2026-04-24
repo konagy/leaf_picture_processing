@@ -243,6 +243,7 @@ def draw_leaf_labels(image: np.ndarray, contours: Sequence[np.ndarray]) -> None:
 
 def build_calibration_preview(
     image: np.ndarray,
+    image_name: str,
     lower_green: np.ndarray,
     upper_green: np.ndarray,
     epsilon_factor: float,
@@ -297,6 +298,15 @@ def build_calibration_preview(
 
     preview = cv2.vconcat([top_row, bottom_row])
     preview = resize_to_fit(preview, 1650, 950)
+    cv2.putText(
+        preview,
+        f"File: {image_name}",
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.9,
+        (255, 255, 255),
+        2,
+    )
     cv2.putText(
         preview,
         "Enter/q: accept | s: skip image | Esc: stop session",
@@ -355,6 +365,7 @@ def calibrate_image(
             try:
                 preview = build_calibration_preview(
                     image=image,
+                    image_name=image_path.name,
                     lower_green=np.array([current_values["lh"], current_values["ls"], current_values["lv"]]),
                     upper_green=np.array([current_values["uh"], current_values["us"], current_values["uv"]]),
                     epsilon_factor=current_values["epsilon"] / 10000.0,
@@ -362,6 +373,7 @@ def calibrate_image(
                 )
             except Exception as error:
                 preview = resize_to_fit(image, 1650, 950)
+                cv2.putText(preview, f"File: {image_path.name}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
                 cv2.putText(preview, str(error), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
             previous_values = current_values.copy()
 
