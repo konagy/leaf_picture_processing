@@ -10,6 +10,7 @@ import numpy as np
 
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+PREVIEW_DEBOUNCE_SECONDS = 0.08
 TRACKBAR_NAMES = {
     "lh": "Min Hue",
     "ls": "Min Saturation",
@@ -147,11 +148,11 @@ def approximate_contour(contour: np.ndarray, epsilon_factor: float) -> np.ndarra
 
 def segment_two_leaves(
     image: np.ndarray,
+    hsv_image: np.ndarray,
     lower_green: np.ndarray,
     upper_green: np.ndarray,
     epsilon_factor: float,
 ) -> Tuple[np.ndarray, List[np.ndarray], List[np.ndarray], List[np.ndarray]]:
-    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv_image, lower_green, upper_green)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)[:2]
@@ -223,7 +224,7 @@ def draw_leaf_labels(image: np.ndarray, contours: Sequence[np.ndarray]) -> None:
             image,
             label,
             (center_x - 140, center_y + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.FONT_ITALIC,
             3.0,
             (0, 0, 0),
             12,
@@ -233,7 +234,7 @@ def draw_leaf_labels(image: np.ndarray, contours: Sequence[np.ndarray]) -> None:
             image,
             label,
             (center_x - 140, center_y + 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.FONT_ITALIC,
             3.0,
             (0, 255, 255),
             6,
@@ -243,39 +244,41 @@ def draw_leaf_labels(image: np.ndarray, contours: Sequence[np.ndarray]) -> None:
 
 def build_calibration_preview(
     image: np.ndarray,
+    hsv_image: np.ndarray,
     image_name: str,
     lower_green: np.ndarray,
     upper_green: np.ndarray,
     epsilon_factor: float,
     spot_threshold: int,
 ) -> np.ndarray:
-    mask, _, approx_contours, leaf_images = segment_two_leaves(image, lower_green, upper_green, epsilon_factor)
+    mask, _, approx_contours, leaf_images = segment_two_leaves(image, hsv_image, lower_green, upper_green, epsilon_factor)
 
+    picSize = 0.6
     original_panel = resize_to_fit(image, 700, 420)
     mask_panel = cv2.cvtColor(resize_to_fit(mask, 700, 420), cv2.COLOR_GRAY2BGR)
-    cv2.putText(mask_panel, "Leaf Mask", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+    cv2.putText(mask_panel, "Leaf Mask", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 255, 0), 2)
 
     contour_overlay = image.copy()
     if approx_contours:
         cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 5)
         draw_leaf_labels(contour_overlay, approx_contours)
     contour_panel = resize_to_fit(contour_overlay, 700, 420)
-    cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+    cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 255, 255), 2)
 
     leaf_panels: List[np.ndarray] = []
     for index, leaf_image in enumerate(leaf_images, start=1):
         spots_image, all_area, spot_area, percentage = detect_spots(leaf_image, spot_threshold)
         combined = cv2.addWeighted(place_on_black_background(leaf_image), 0.75, spots_image, 0.95, 0.0)
         panel = resize_to_fit(combined, 700, 320)
-        cv2.putText(panel, f"Leaf {index}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-        cv2.putText(panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.putText(panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (255, 255, 255), 2)
+        cv2.putText(panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (255, 255, 255), 2)
+        cv2.putText(panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
+        cv2.putText(panel, f"Spot %: {percentage:.2f}", (20, 140), cv2.FONT_ITALIC, picSize*0.8, (0, 255, 255), 2)
         leaf_panels.append(panel)
 
     if not leaf_panels:
         empty = np.zeros((240, 700, 3), dtype=np.uint8)
-        cv2.putText(empty, "Could not isolate two leaves with current HSV values.", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+        cv2.putText(empty, "Could not isolate two leaves with current HSV values.", (20, 120), cv2.FONT_ITALIC, picSize*0.9, (0, 0, 255), 2)
         leaf_panels = [empty]
 
     top_row_height = max(original_panel.shape[0], contour_panel.shape[0], mask_panel.shape[0])
@@ -302,7 +305,7 @@ def build_calibration_preview(
         preview,
         f"File: {image_name}",
         (20, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.FONT_ITALIC,
         0.9,
         (255, 255, 255),
         2,
@@ -311,7 +314,7 @@ def build_calibration_preview(
         preview,
         "Enter/q: accept | s: skip image | Esc: stop session",
         (20, preview.shape[0] - 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.FONT_ITALIC,
         0.8,
         (255, 255, 255),
         2,
@@ -326,6 +329,7 @@ def calibrate_image(
     image = cv2.imread(str(image_path))
     if image is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
     def nothing(_: int) -> None:
         return None
@@ -341,11 +345,13 @@ def calibrate_image(
     cv2.createTrackbar(TRACKBAR_NAMES["uh"], "Controls", initial_values["uh"], 179, nothing)
     cv2.createTrackbar(TRACKBAR_NAMES["us"], "Controls", initial_values["us"], 255, nothing)
     cv2.createTrackbar(TRACKBAR_NAMES["uv"], "Controls", initial_values["uv"], 255, nothing)
-    cv2.createTrackbar(TRACKBAR_NAMES["epsilon"], "Controls", initial_values["epsilon"], 1000, nothing)
+    cv2.createTrackbar(TRACKBAR_NAMES["epsilon"], "Controls", initial_values["epsilon"], 100, nothing)
     cv2.createTrackbar(TRACKBAR_NAMES["spot_threshold"], "Controls", initial_values["spot_threshold"], 255, nothing)
 
     current_values = initial_values.copy()
     previous_values = None
+    pending_values = None
+    last_change_time = 0.0
     preview = None
     action = "accept"
 
@@ -361,21 +367,32 @@ def calibrate_image(
             "spot_threshold": cv2.getTrackbarPos(TRACKBAR_NAMES["spot_threshold"], "Controls"),
         }
 
-        if current_values != previous_values or preview is None:
+        if current_values != pending_values:
+            pending_values = current_values.copy()
+            last_change_time = time.monotonic()
+
+        should_refresh = preview is None or (
+            pending_values is not None
+            and pending_values != previous_values
+            and (time.monotonic() - last_change_time) >= PREVIEW_DEBOUNCE_SECONDS
+        )
+
+        if should_refresh:
             try:
                 preview = build_calibration_preview(
                     image=image,
+                    hsv_image=hsv_image,
                     image_name=image_path.name,
-                    lower_green=np.array([current_values["lh"], current_values["ls"], current_values["lv"]]),
-                    upper_green=np.array([current_values["uh"], current_values["us"], current_values["uv"]]),
-                    epsilon_factor=current_values["epsilon"] / 10000.0,
-                    spot_threshold=current_values["spot_threshold"],
+                    lower_green=np.array([pending_values["lh"], pending_values["ls"], pending_values["lv"]]),
+                    upper_green=np.array([pending_values["uh"], pending_values["us"], pending_values["uv"]]),
+                    epsilon_factor=pending_values["epsilon"] / 10000.0,
+                    spot_threshold=pending_values["spot_threshold"],
                 )
             except Exception as error:
                 preview = resize_to_fit(image, 1650, 950)
-                cv2.putText(preview, f"File: {image_path.name}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-                cv2.putText(preview, str(error), (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-            previous_values = current_values.copy()
+                cv2.putText(preview, f"File: {image_path.name}", (20, 40), cv2.FONT_ITALIC, 0.9, (255, 255, 255), 2)
+                cv2.putText(preview, str(error), (20, 80), cv2.FONT_ITALIC, 0.9, (0, 0, 255), 2)
+            previous_values = pending_values.copy()
 
         cv2.imshow("Threshold Setup", preview)
         key = cv2.waitKey(15) & 0xFF
@@ -413,8 +430,9 @@ def splitting_images(
     image = cv2.imread(str(image_path))
     if image is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    _, _, approx_contours, leaf_images = segment_two_leaves(image, lower_green, upper_green, epsilon_factor)
+    _, _, approx_contours, leaf_images = segment_two_leaves(image, hsv_image, lower_green, upper_green, epsilon_factor)
     if len(approx_contours) < 2 or len(leaf_images) < 2:
         raise ValueError("Could not find two leaves with the selected HSV thresholds.")
 
