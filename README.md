@@ -2,13 +2,13 @@
 
 OpenCV-based tooling for processing photos that contain two leaves, separating them from the background, and measuring pale or damaged areas on each leaf.
 
-The current main workflow is interactive:
+The current main workflow is an application-style interactive GUI:
 
-1. Choose a folder that contains the input pictures.
-2. Step through the pictures one by one.
-3. Adjust the mask and spot thresholds in the GUI for the current image.
-4. Accept, skip, or stop.
-5. Save split leaf images, processed previews, and a CSV summary.
+1. Open a folder that contains the input pictures.
+2. Select any picture from the file list.
+3. Adjust the mask and spot thresholds while the preview updates in the same window.
+4. Process, skip, stop, or jump to the next pending file.
+5. Resume the same work later from the saved session.
 
 ## Main script
 
@@ -17,12 +17,22 @@ Use [`picture_processing_oulema.py`](./picture_processing_oulema.py).
 What it does:
 
 - opens a folder picker if no input folder is given on the command line
-- iterates through all supported images in that folder
-- opens a calibration GUI before each image is processed
+- shows all supported images in a file list with pending/done/skipped/error status
+- opens a single-window calibration GUI with preview, sliders, actions, and the file list together
+- resumes unfinished work from the latest matching results folder
 - segments the two largest green leaf contours
 - saves the two leaf cutouts as `*_leaf1.jpg` and `*_leaf2.jpg`
 - detects bright or pale spots on each extracted leaf using a grayscale threshold
 - writes the measurements to a CSV file in a timestamped results folder
+
+## Code Layout
+
+- `picture_processing_oulema.py`: command-line entrypoint and legacy batch loop
+- `leaf_processing_config.py`: shared constants and slider names
+- `leaf_processing_core.py`: CSV, session, folder, and resume helpers
+- `leaf_processing_image.py`: OpenCV image-processing and preview functions
+- `leaf_processing_cv_app.py`: single-window OpenCV application shell
+- `leaf_processing_tk_app.py`: native Tkinter application shell when Tkinter is available
 
 ## Requirements
 
@@ -32,7 +42,7 @@ Install:
 pip install opencv-python numpy
 ```
 
-The script also uses standard-library modules such as `argparse`, `csv`, `pathlib`, `subprocess`, and `time`.
+The native desktop shell uses Python's standard `tkinter` module when it is available. If the bundled Python does not include `tkinter`, the script automatically falls back to a single-window OpenCV application with the same file list, sliders, and session resume behavior.
 
 ## How To Run
 
@@ -42,7 +52,7 @@ The script also uses standard-library modules such as `argparse`, `csv`, `pathli
 python picture_processing_oulema.py
 ```
 
-This opens a folder picker and lets you choose the folder with leaf pictures.
+This opens the application. Use `Open Folder` to choose the folder with leaf pictures.
 
 ### Pass the folder on the command line
 
@@ -74,12 +84,14 @@ dist\leaf-picture-processing.exe
 
 ## GUI Workflow
 
-For each picture, the script opens:
+The main window contains:
 
-- `Threshold Setup`: the main preview window
-- `Controls`: the slider window
+- the full file list with processing status
+- the current picture preview and leaf/spot processing preview
+- the HSV, contour, and spot-threshold sliders
+- action buttons for processing, skipping, selecting the next pending file, and stopping
 
-The main preview shows:
+The preview shows:
 
 - the original image
 - the original image with detected contours and `Leaf 1` / `Leaf 2` labels
@@ -88,9 +100,30 @@ The main preview shows:
 
 Keyboard controls:
 
-- `Enter` or `q`: accept the current values and process the image
+- `Enter`: process the selected image
 - `s`: skip the current image
-- `Esc`: stop the full session
+- `n`: select the next pending image
+- `o`: open a different folder
+- `0`: reset preview zoom
+- `Esc`: save and stop the session
+
+Preview controls:
+
+- mouse wheel: zoom in and out around the cursor
+- left mouse drag: pan while zoomed in
+- double-click: reset preview zoom
+
+You can click any file in the list, including already processed files, to review or reprocess it.
+
+## Resume Workflow
+
+Each results folder now includes a session file:
+
+```text
+leaf-processing-session.json
+```
+
+When the same input folder is opened again, the application automatically resumes the newest matching session that still has pending or error files. Done and skipped files stay marked in the list, and the last slider values are restored.
 
 ## Slider Guide
 
@@ -166,6 +199,7 @@ Each run creates a new timestamped results folder such as:
 Inside that folder you will find:
 
 - a CSV summary file
+- `leaf-processing-session.json`
 - extracted leaves
 - processed preview images
 - threshold-based spot images
@@ -186,9 +220,13 @@ Each CSV row contains:
 
 - image name
 - total leaf area in pixels
-- detected spot area in pixels
-- spotted area percentage
-- threshold used for spot detection
+- total detected hole/spot area in pixels
+- spotted area percentage, based only on the total hole/spot area
+- number of detected holes/spots
+- individual hole/spot areas in pixels, stored in `Hole areas [pixels]` as a semicolon-separated list
+- slider settings used for that row: `lh`, `ls`, `lv`, `uh`, `us`, `uv`, `epsilon`, and `spot_threshold`
+
+When an older resumable session is continued, the application upgrades the CSV header before appending new rows.
 
 ## Current Limitations
 

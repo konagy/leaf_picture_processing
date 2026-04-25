@@ -11,3 +11,6 @@ results-envelope-*/
 *.zip
 *.pkg
 /build
+build/leaf-picture-processing/EXE-00.toc
+build/leaf-picture-processing/EXE-00.toc
+/dist
