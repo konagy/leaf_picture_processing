@@ -27,6 +27,10 @@ SESSION_FILE_NAME = "leaf-processing-session.json"
 SESSION_VERSION = 1
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 PREVIEW_DEBOUNCE_SECONDS = 0.08
+PREVIEW_ZOOM_MIN = 1.0
+PREVIEW_ZOOM_MAX = 8.0
+PREVIEW_ZOOM_FACTOR = 1.22
+PREVIEW_BACKGROUND_COLOR = (16, 24, 32)
 TOP_PANEL_WIDTH = 560
 TOP_PANEL_HEIGHT = 336
 BOTTOM_PANEL_WIDTH = 1008
@@ -421,6 +425,116 @@ def resize_to_fit(image: np.ndarray, max_width: int, max_height: int) -> np.ndar
         (max(1, int(width * scale)), max(1, int(height * scale))),
         interpolation=cv2.INTER_AREA,
     )
+
+
+def preview_fit_scale(image: np.ndarray, viewport_width: int, viewport_height: int) -> float:
+    height, width = image.shape[:2]
+    return min(viewport_width / max(width, 1), viewport_height / max(height, 1), 1.0)
+
+
+def preview_scaled_size(image: np.ndarray, viewport_width: int, viewport_height: int, zoom: float) -> Tuple[int, int]:
+    height, width = image.shape[:2]
+    scale = preview_fit_scale(image, viewport_width, viewport_height) * zoom
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def clamp_preview_pan(
+    pan_x: int,
+    pan_y: int,
+    scaled_width: int,
+    scaled_height: int,
+    viewport_width: int,
+    viewport_height: int,
+) -> Tuple[int, int]:
+    max_pan_x = max(0, scaled_width - viewport_width)
+    max_pan_y = max(0, scaled_height - viewport_height)
+    return clamp_int(pan_x, 0, max_pan_x), clamp_int(pan_y, 0, max_pan_y)
+
+
+def render_preview_view(
+    image: np.ndarray,
+    viewport_width: int,
+    viewport_height: int,
+    zoom: float,
+    pan_x: int,
+    pan_y: int,
+) -> Tuple[np.ndarray, int, int]:
+    viewport_width = max(1, viewport_width)
+    viewport_height = max(1, viewport_height)
+    zoom = max(PREVIEW_ZOOM_MIN, min(PREVIEW_ZOOM_MAX, zoom))
+    scaled_width, scaled_height = preview_scaled_size(image, viewport_width, viewport_height, zoom)
+    pan_x, pan_y = clamp_preview_pan(pan_x, pan_y, scaled_width, scaled_height, viewport_width, viewport_height)
+
+    interpolation = cv2.INTER_AREA if scaled_width < image.shape[1] or scaled_height < image.shape[0] else cv2.INTER_LINEAR
+    scaled = cv2.resize(image, (scaled_width, scaled_height), interpolation=interpolation)
+    view = np.full((viewport_height, viewport_width, 3), PREVIEW_BACKGROUND_COLOR, dtype=np.uint8)
+
+    if scaled_width <= viewport_width:
+        src_x = 0
+        dst_x = (viewport_width - scaled_width) // 2
+        copy_width = scaled_width
+    else:
+        src_x = pan_x
+        dst_x = 0
+        copy_width = viewport_width
+
+    if scaled_height <= viewport_height:
+        src_y = 0
+        dst_y = (viewport_height - scaled_height) // 2
+        copy_height = scaled_height
+    else:
+        src_y = pan_y
+        dst_y = 0
+        copy_height = viewport_height
+
+    view[dst_y : dst_y + copy_height, dst_x : dst_x + copy_width] = scaled[
+        src_y : src_y + copy_height,
+        src_x : src_x + copy_width,
+    ]
+    return view, pan_x, pan_y
+
+
+def zoom_preview_at(
+    image: np.ndarray,
+    viewport_width: int,
+    viewport_height: int,
+    zoom: float,
+    pan_x: int,
+    pan_y: int,
+    cursor_x: int,
+    cursor_y: int,
+    direction: int,
+) -> Tuple[float, int, int]:
+    if direction == 0:
+        return zoom, pan_x, pan_y
+
+    old_zoom = max(PREVIEW_ZOOM_MIN, min(PREVIEW_ZOOM_MAX, zoom))
+    factor = PREVIEW_ZOOM_FACTOR if direction > 0 else 1.0 / PREVIEW_ZOOM_FACTOR
+    new_zoom = max(PREVIEW_ZOOM_MIN, min(PREVIEW_ZOOM_MAX, old_zoom * factor))
+    if abs(new_zoom - old_zoom) < 0.001:
+        return old_zoom, pan_x, pan_y
+
+    old_width, old_height = preview_scaled_size(image, viewport_width, viewport_height, old_zoom)
+    pan_x, pan_y = clamp_preview_pan(pan_x, pan_y, old_width, old_height, viewport_width, viewport_height)
+    old_left = (viewport_width - old_width) // 2 if old_width <= viewport_width else 0
+    old_top = (viewport_height - old_height) // 2 if old_height <= viewport_height else 0
+    image_x = clamp_int(pan_x + cursor_x - old_left, 0, old_width)
+    image_y = clamp_int(pan_y + cursor_y - old_top, 0, old_height)
+    ratio_x = image_x / max(old_width, 1)
+    ratio_y = image_y / max(old_height, 1)
+
+    new_width, new_height = preview_scaled_size(image, viewport_width, viewport_height, new_zoom)
+    new_pan_x = int(round(ratio_x * new_width - cursor_x))
+    new_pan_y = int(round(ratio_y * new_height - cursor_y))
+    new_pan_x, new_pan_y = clamp_preview_pan(
+        new_pan_x,
+        new_pan_y,
+        new_width,
+        new_height,
+        viewport_width,
+        viewport_height,
+    )
+    return new_zoom, new_pan_x, new_pan_y
 
 
 def approximate_contour(contour: np.ndarray, epsilon_factor: float) -> np.ndarray:
@@ -837,6 +951,11 @@ class LeafProcessingApp:
         self.tk_preview: Optional[tk.PhotoImage] = None
         self.preview_after_id: Optional[str] = None
         self.render_after_id: Optional[str] = None
+        self.preview_zoom = PREVIEW_ZOOM_MIN
+        self.preview_pan_x = 0
+        self.preview_pan_y = 0
+        self.preview_drag_start: Optional[Tuple[int, int]] = None
+        self.preview_drag_start_pan: Tuple[int, int] = (0, 0)
         self.slider_vars: Dict[str, tk.DoubleVar] = {}
         self.value_vars: Dict[str, tk.StringVar] = {}
         self.slider_widgets: List[ttk.Scale] = []
@@ -955,6 +1074,13 @@ class LeafProcessingApp:
         self.preview_label = tk.Label(preview_shell, bg="#101820", fg="#dbe4ee", text="", anchor="center")
         self.preview_label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.preview_label.bind("<Configure>", lambda _: self._schedule_render())
+        self.preview_label.bind("<MouseWheel>", self._on_preview_mouse_wheel)
+        self.preview_label.bind("<Button-4>", self._on_preview_mouse_wheel)
+        self.preview_label.bind("<Button-5>", self._on_preview_mouse_wheel)
+        self.preview_label.bind("<ButtonPress-1>", self._on_preview_press)
+        self.preview_label.bind("<B1-Motion>", self._on_preview_drag)
+        self.preview_label.bind("<ButtonRelease-1>", self._on_preview_release)
+        self.preview_label.bind("<Double-Button-1>", self._on_preview_double_click)
 
         ttk.Label(main, textvariable=self.status_var, style="Status.TLabel").grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
@@ -1142,6 +1268,7 @@ class LeafProcessingApp:
         else:
             self.status_var.set(f"{status_label(status)} file selected")
 
+        self._reset_preview_zoom(schedule=False)
         self._schedule_preview()
         self._save_session()
 
@@ -1277,9 +1404,81 @@ class LeafProcessingApp:
 
         width = max(self.preview_label.winfo_width() - 12, 320)
         height = max(self.preview_label.winfo_height() - 12, 240)
-        display_image = resize_to_fit(self.preview_image, width, height)
+        display_image, self.preview_pan_x, self.preview_pan_y = render_preview_view(
+            self.preview_image,
+            width,
+            height,
+            self.preview_zoom,
+            self.preview_pan_x,
+            self.preview_pan_y,
+        )
         self.tk_preview = cv_image_to_photo(display_image)
         self.preview_label.configure(image=self.tk_preview, text="")
+
+    def _reset_preview_zoom(self, schedule: bool = True) -> None:
+        self.preview_zoom = PREVIEW_ZOOM_MIN
+        self.preview_pan_x = 0
+        self.preview_pan_y = 0
+        self.preview_drag_start = None
+        if schedule:
+            self._schedule_render()
+
+    def _on_preview_mouse_wheel(self, event: object) -> str:
+        if self.preview_image is None:
+            return "break"
+
+        direction = 1 if getattr(event, "delta", 0) > 0 or getattr(event, "num", None) == 4 else -1
+        width = max(self.preview_label.winfo_width() - 12, 320)
+        height = max(self.preview_label.winfo_height() - 12, 240)
+        self.preview_zoom, self.preview_pan_x, self.preview_pan_y = zoom_preview_at(
+            self.preview_image,
+            width,
+            height,
+            self.preview_zoom,
+            self.preview_pan_x,
+            self.preview_pan_y,
+            int(getattr(event, "x", width // 2)),
+            int(getattr(event, "y", height // 2)),
+            direction,
+        )
+        self.status_var.set(f"Preview zoom: {self.preview_zoom:.1f}x")
+        self._schedule_render()
+        return "break"
+
+    def _on_preview_press(self, event: object) -> str:
+        self.preview_drag_start = (int(getattr(event, "x", 0)), int(getattr(event, "y", 0)))
+        self.preview_drag_start_pan = (self.preview_pan_x, self.preview_pan_y)
+        return "break"
+
+    def _on_preview_drag(self, event: object) -> str:
+        if self.preview_image is None or self.preview_drag_start is None:
+            return "break"
+
+        start_x, start_y = self.preview_drag_start
+        delta_x = int(getattr(event, "x", start_x)) - start_x
+        delta_y = int(getattr(event, "y", start_y)) - start_y
+        width = max(self.preview_label.winfo_width() - 12, 320)
+        height = max(self.preview_label.winfo_height() - 12, 240)
+        scaled_width, scaled_height = preview_scaled_size(self.preview_image, width, height, self.preview_zoom)
+        self.preview_pan_x, self.preview_pan_y = clamp_preview_pan(
+            self.preview_drag_start_pan[0] - delta_x,
+            self.preview_drag_start_pan[1] - delta_y,
+            scaled_width,
+            scaled_height,
+            width,
+            height,
+        )
+        self._schedule_render()
+        return "break"
+
+    def _on_preview_release(self, _: object) -> str:
+        self.preview_drag_start = None
+        return "break"
+
+    def _on_preview_double_click(self, _: object) -> str:
+        self._reset_preview_zoom()
+        self.status_var.set("Preview zoom reset")
+        return "break"
 
     def process_selected(self) -> None:
         if self.busy or not self.session_data or not self.selected_path:
@@ -1445,6 +1644,12 @@ class OpenCvProcessingApp:
         self.loaded_hsv_image: Optional[np.ndarray] = None
         self.preview_image: Optional[np.ndarray] = None
         self.preview_dirty = True
+        self.preview_zoom = PREVIEW_ZOOM_MIN
+        self.preview_pan_x = 0
+        self.preview_pan_y = 0
+        self.preview_viewport_rect: Optional[Tuple[int, int, int, int]] = None
+        self.preview_drag_start: Optional[Tuple[int, int]] = None
+        self.preview_drag_start_pan: Tuple[int, int] = (0, 0)
         self.last_change_time = 0.0
         self.running = True
         self.busy = False
@@ -1552,6 +1757,7 @@ class OpenCvProcessingApp:
         self.session_data["selected_path"] = item["path"]
         self.loaded_image_path = None
         self.preview_dirty = True
+        self._reset_preview_zoom()
         self.last_change_time = 0.0
         self._keep_selection_visible()
         self._save_session()
@@ -1718,6 +1924,9 @@ class OpenCvProcessingApp:
                 self.status_text = "All files are done or skipped."
         elif key in (ord("o"), ord("O")):
             self.open_folder()
+        elif key in (ord("0"),):
+            self._reset_preview_zoom()
+            self.status_text = "Preview zoom reset."
         elif key in (2424832, 81):
             self._select_index(max(0, self.selected_index - 1))
         elif key in (2555904, 83):
@@ -1725,6 +1934,11 @@ class OpenCvProcessingApp:
                 self._select_index(min(len(self.session_data.get("files", [])) - 1, self.selected_index + 1))
 
     def _on_mouse(self, event: int, x: int, y: int, flags: int, _: object) -> None:
+        if event == cv2.EVENT_LBUTTONDBLCLK and self._point_in_preview(x, y):
+            self._reset_preview_zoom()
+            self.status_text = "Preview zoom reset."
+            return
+
         if event == cv2.EVENT_LBUTTONDOWN:
             for action, rect in self.button_hitboxes.items():
                 if self._point_in_rect(x, y, rect):
@@ -1743,15 +1957,26 @@ class OpenCvProcessingApp:
                     self._select_index(index)
                     return
 
+            if self._point_in_preview(x, y):
+                self.preview_drag_start = (x, y)
+                self.preview_drag_start_pan = (self.preview_pan_x, self.preview_pan_y)
+                return
+
         elif event == cv2.EVENT_MOUSEMOVE and self.dragging_slider:
             self._set_slider_from_x(self.dragging_slider, x)
+        elif event == cv2.EVENT_MOUSEMOVE and self.preview_drag_start:
+            self._drag_preview_to(x, y)
         elif event == cv2.EVENT_LBUTTONUP:
             self.dragging_slider = None
+            self.preview_drag_start = None
             self._save_session()
         elif event == cv2.EVENT_MOUSEWHEEL and self.session_data:
-            direction = -1 if flags > 0 else 1
-            max_scroll = max(0, len(self.session_data.get("files", [])) - self._visible_file_rows())
-            self.file_scroll = clamp_int(self.file_scroll + direction * 3, 0, max_scroll)
+            if self._point_in_preview(x, y):
+                self._zoom_preview_at(x, y, 1 if flags > 0 else -1)
+            else:
+                direction = -1 if flags > 0 else 1
+                max_scroll = max(0, len(self.session_data.get("files", [])) - self._visible_file_rows())
+                self.file_scroll = clamp_int(self.file_scroll + direction * 3, 0, max_scroll)
 
     def _run_button_action(self, action: str) -> None:
         if action == "open":
@@ -1765,6 +1990,58 @@ class OpenCvProcessingApp:
             self.skip_selected()
         elif action == "stop":
             self.running = False
+
+    def _reset_preview_zoom(self) -> None:
+        self.preview_zoom = PREVIEW_ZOOM_MIN
+        self.preview_pan_x = 0
+        self.preview_pan_y = 0
+        self.preview_drag_start = None
+
+    def _point_in_preview(self, x: int, y: int) -> bool:
+        return self.preview_viewport_rect is not None and self._point_in_rect(x, y, self.preview_viewport_rect)
+
+    def _zoom_preview_at(self, x: int, y: int, direction: int) -> None:
+        if self.preview_image is None or self.preview_viewport_rect is None:
+            return
+
+        left, top, right, bottom = self.preview_viewport_rect
+        self.preview_zoom, self.preview_pan_x, self.preview_pan_y = zoom_preview_at(
+            self.preview_image,
+            max(1, right - left),
+            max(1, bottom - top),
+            self.preview_zoom,
+            self.preview_pan_x,
+            self.preview_pan_y,
+            clamp_int(x - left, 0, max(1, right - left)),
+            clamp_int(y - top, 0, max(1, bottom - top)),
+            direction,
+        )
+        self.status_text = f"Preview zoom: {self.preview_zoom:.1f}x"
+
+    def _drag_preview_to(self, x: int, y: int) -> None:
+        if self.preview_image is None or self.preview_viewport_rect is None or self.preview_drag_start is None:
+            return
+
+        left, top, right, bottom = self.preview_viewport_rect
+        start_x, start_y = self.preview_drag_start
+        delta_x = x - start_x
+        delta_y = y - start_y
+        viewport_width = max(1, right - left)
+        viewport_height = max(1, bottom - top)
+        scaled_width, scaled_height = preview_scaled_size(
+            self.preview_image,
+            viewport_width,
+            viewport_height,
+            self.preview_zoom,
+        )
+        self.preview_pan_x, self.preview_pan_y = clamp_preview_pan(
+            self.preview_drag_start_pan[0] - delta_x,
+            self.preview_drag_start_pan[1] - delta_y,
+            scaled_width,
+            scaled_height,
+            viewport_width,
+            viewport_height,
+        )
 
     def _set_slider_from_x(self, key: str, x: int) -> None:
         hitbox = self.slider_hitboxes.get(key)
@@ -1853,12 +2130,22 @@ class OpenCvProcessingApp:
         if preview is None:
             preview = make_message_preview("Leaf Picture Processing", ["Open a folder to begin."])
 
-        max_width = panel[2] - panel[0] - 20
-        max_height = panel[3] - panel[1] - 20
-        display = resize_to_fit(preview, max_width, max_height)
-        top = panel[1] + (max_height - display.shape[0]) // 2 + 10
-        left = panel[0] + (max_width - display.shape[1]) // 2 + 10
-        canvas[top : top + display.shape[0], left : left + display.shape[1]] = display
+        self.preview_viewport_rect = (panel[0] + 10, panel[1] + 10, panel[2] - 10, panel[3] - 10)
+        left, top, right, bottom = self.preview_viewport_rect
+        display, self.preview_pan_x, self.preview_pan_y = render_preview_view(
+            preview,
+            max(1, right - left),
+            max(1, bottom - top),
+            self.preview_zoom,
+            self.preview_pan_x,
+            self.preview_pan_y,
+        )
+        canvas[top:bottom, left:right] = display
+
+        if self.preview_zoom > PREVIEW_ZOOM_MIN + 0.01:
+            label = f"{self.preview_zoom:.1f}x"
+            self._fill_rect(canvas, (right - 78, top + 12, right - 18, top + 38), (31, 41, 55))
+            self._draw_text(canvas, label, right - 67, top + 31, 0.48, (226, 232, 240), 1)
 
     def _draw_controls(self, canvas: np.ndarray) -> None:
         x1 = self.WIDTH - self.CONTROLS_WIDTH + 10
@@ -1897,7 +2184,7 @@ class OpenCvProcessingApp:
         y1 = self.HEIGHT - 52
         x2 = self.WIDTH - self.CONTROLS_WIDTH - 8
         self._draw_text(canvas, self.status_text, x1 + 10, y1 + 26, 0.48, (83, 97, 112), 1, max_width=x2 - x1 - 20)
-        hint = "Enter: process | S: skip | N: next | O: open folder | Esc: save and stop"
+        hint = "Enter: process | Wheel: zoom | Drag: pan | Double-click/0: reset | Esc: save and stop"
         self._draw_text(canvas, hint, x1 + 10, y1 + 48, 0.42, (83, 97, 112), 1, max_width=x2 - x1 - 20)
 
     def _draw_button(self, canvas: np.ndarray, action: str, label: str, rect: Tuple[int, int, int, int], primary: bool) -> None:
