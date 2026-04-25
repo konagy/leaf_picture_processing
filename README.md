@@ -95,8 +95,14 @@ The preview shows:
 
 - the original image
 - the original image with detected contours and `Leaf 1` / `Leaf 2` labels
-- the binary leaf mask
-- per-leaf spot preview panels with leaf area, spot area, and spot percentage
+- each extracted leaf with leaf area, spot area, spot percentage, and hole count
+- each leaf's threshold-based spot preview
+
+The preview is arranged as:
+
+- row 1: original image and detected leaf contours
+- row 2: `Leaf 1` and `Leaf 1 Spots`
+- row 3: `Leaf 2` and `Leaf 2 Spots`
 
 Keyboard controls:
 
@@ -112,6 +118,8 @@ Preview controls:
 - mouse wheel: zoom in and out around the cursor
 - left mouse drag: pan while zoomed in
 - double-click: reset preview zoom
+
+The application window uses a sharper preview source for zooming than the compact saved preview image, so zooming in the GUI keeps more detail visible while the processing still runs on the original input image.
 
 You can click any file in the list, including already processed files, to review or reprocess it.
 

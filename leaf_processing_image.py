@@ -15,6 +15,10 @@ from leaf_processing_config import (
     PREVIEW_ZOOM_FACTOR,
     PREVIEW_ZOOM_MAX,
     PREVIEW_ZOOM_MIN,
+    SHARP_PREVIEW_MAX_HEIGHT,
+    SHARP_PREVIEW_MAX_WIDTH,
+    SHARP_PREVIEW_PANEL_HEIGHT,
+    SHARP_PREVIEW_PANEL_WIDTH,
     TOP_PANEL_HEIGHT,
     TOP_PANEL_WIDTH,
     TRACKBAR_NAMES,
@@ -227,6 +231,21 @@ def pad_to_height(image: np.ndarray, height: int) -> np.ndarray:
     )
 
 
+def pad_to_width(image: np.ndarray, width: int) -> np.ndarray:
+    if image.shape[1] == width:
+        return image
+    pad_total = width - image.shape[1]
+    return cv2.copyMakeBorder(
+        image,
+        0,
+        0,
+        0,
+        pad_total,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0),
+    )
+
+
 def contour_label_position(contour: np.ndarray) -> Tuple[int, int]:
     moments = cv2.moments(contour)
     if moments["m00"] != 0:
@@ -261,17 +280,23 @@ def build_calibration_preview(
     upper_green: np.ndarray,
     epsilon_factor: float,
     spot_threshold: int,
+    top_panel_width: int = TOP_PANEL_WIDTH,
+    top_panel_height: int = TOP_PANEL_HEIGHT,
+    bottom_panel_width: int = BOTTOM_PANEL_WIDTH,
+    bottom_panel_height: int = BOTTOM_PANEL_HEIGHT,
+    max_preview_width: Optional[int] = 1650,
+    max_preview_height: Optional[int] = 950,
 ) -> np.ndarray:
     _, _, approx_contours, leaf_images = segment_two_leaves(image, hsv_image, lower_green, upper_green, epsilon_factor)
 
     picSize = 0.6
-    original_panel = resize_to_fit(image, TOP_PANEL_WIDTH, TOP_PANEL_HEIGHT)
+    original_panel = resize_to_fit(image, top_panel_width, top_panel_height)
 
     contour_overlay = image.copy()
     if approx_contours:
-        cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 20)
+        cv2.drawContours(contour_overlay, approx_contours, -1, (0, 255, 255), 5)
         draw_leaf_labels(contour_overlay, approx_contours)
-    contour_panel = resize_to_fit(contour_overlay, TOP_PANEL_WIDTH, TOP_PANEL_HEIGHT)
+    contour_panel = resize_to_fit(contour_overlay, top_panel_width, top_panel_height)
     cv2.putText(contour_panel, "Original + Leaf Contours", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (50, 144, 66), 2)
 
     combined_panels: List[np.ndarray] = []
@@ -279,7 +304,7 @@ def build_calibration_preview(
     for index, leaf_image in enumerate(leaf_images, start=1):
         spots_image, all_area, spot_area, percentage, hole_areas = detect_spots(leaf_image, spot_threshold)
         combined = cv2.addWeighted(place_on_black_background(leaf_image), 0.75, spots_image, 0.95, 0.0)
-        combined_panel = resize_to_fit(combined, BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
+        combined_panel = resize_to_fit(combined, bottom_panel_width, bottom_panel_height)
         cv2.putText(combined_panel, f"Leaf {index}", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (0, 0, 0), 2)
         cv2.putText(combined_panel, f"Leaf area: {all_area}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
         cv2.putText(combined_panel, f"Spot area: {spot_area}", (20, 105), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
@@ -287,17 +312,10 @@ def build_calibration_preview(
         cv2.putText(combined_panel, f"Holes: {len(hole_areas)}", (20, 175), cv2.FONT_ITALIC, picSize*0.8, (0, 0, 0), 2)
         combined_panels.append(combined_panel)
 
-        spot_panel = resize_to_fit(place_on_gray_background(spots_image), BOTTOM_PANEL_WIDTH, BOTTOM_PANEL_HEIGHT)
+        spot_panel = resize_to_fit(place_on_gray_background(spots_image), bottom_panel_width, bottom_panel_height)
         cv2.putText(spot_panel, f"Leaf {index} Spots", (20, 35), cv2.FONT_ITALIC, picSize*1.0, (50, 144, 66), 2)
         cv2.putText(spot_panel, f"Threshold: {spot_threshold}", (20, 70), cv2.FONT_ITALIC, picSize*0.8, (50, 144, 66), 2)
         spot_panels.append(spot_panel)
-
-    leaf_panels = combined_panels + spot_panels
-
-    if not leaf_panels:
-        empty = np.zeros((240, 700, 3), dtype=np.uint8)
-        cv2.putText(empty, "Could not isolate two leaves with current HSV values.", (20, 120), cv2.FONT_ITALIC, picSize*0.9, (0, 0, 255), 2)
-        leaf_panels = [empty]
 
     top_row_height = max(original_panel.shape[0], contour_panel.shape[0])
     top_row = cv2.hconcat(
@@ -307,17 +325,30 @@ def build_calibration_preview(
         ]
     )
 
-    bottom_row_height = max(panel.shape[0] for panel in leaf_panels)
-    bottom_row = cv2.hconcat([pad_to_height(panel, bottom_row_height) for panel in leaf_panels])
+    leaf_rows: List[np.ndarray] = []
+    if not combined_panels:
+        empty = np.zeros((240, 700, 3), dtype=np.uint8)
+        cv2.putText(empty, "Could not isolate two leaves with current HSV values.", (20, 120), cv2.FONT_ITALIC, picSize*0.9, (0, 0, 255), 2)
+        leaf_rows.append(empty)
+    else:
+        for combined_panel, spot_panel in zip(combined_panels, spot_panels):
+            row_height = max(combined_panel.shape[0], spot_panel.shape[0])
+            leaf_rows.append(
+                cv2.hconcat(
+                    [
+                        pad_to_height(combined_panel, row_height),
+                        pad_to_height(spot_panel, row_height),
+                    ]
+                )
+            )
 
-    canvas_width = max(top_row.shape[1], bottom_row.shape[1])
-    if top_row.shape[1] < canvas_width:
-        top_row = cv2.copyMakeBorder(top_row, 0, 0, 0, canvas_width - top_row.shape[1], cv2.BORDER_CONSTANT, value=(0, 0, 0))
-    if bottom_row.shape[1] < canvas_width:
-        bottom_row = cv2.copyMakeBorder(bottom_row, 0, 0, 0, canvas_width - bottom_row.shape[1], cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    preview_rows = [top_row, *leaf_rows]
+    canvas_width = max(row.shape[1] for row in preview_rows)
+    preview_rows = [pad_to_width(row, canvas_width) for row in preview_rows]
 
-    preview = cv2.vconcat([top_row, bottom_row])
-    preview = resize_to_fit(preview, 1650, 950)
+    preview = cv2.vconcat(preview_rows)
+    if max_preview_width is not None and max_preview_height is not None:
+        preview = resize_to_fit(preview, max_preview_width, max_preview_height)
     cv2.putText(
         preview,
         f"File: {image_name}",
@@ -337,6 +368,32 @@ def build_calibration_preview(
         2,
     )
     return preview
+
+
+def build_sharp_calibration_preview(
+    image: np.ndarray,
+    hsv_image: np.ndarray,
+    image_name: str,
+    lower_green: np.ndarray,
+    upper_green: np.ndarray,
+    epsilon_factor: float,
+    spot_threshold: int,
+) -> np.ndarray:
+    return build_calibration_preview(
+        image=image,
+        hsv_image=hsv_image,
+        image_name=image_name,
+        lower_green=lower_green,
+        upper_green=upper_green,
+        epsilon_factor=epsilon_factor,
+        spot_threshold=spot_threshold,
+        top_panel_width=SHARP_PREVIEW_PANEL_WIDTH,
+        top_panel_height=SHARP_PREVIEW_PANEL_HEIGHT,
+        bottom_panel_width=SHARP_PREVIEW_PANEL_WIDTH,
+        bottom_panel_height=SHARP_PREVIEW_PANEL_HEIGHT,
+        max_preview_width=SHARP_PREVIEW_MAX_WIDTH,
+        max_preview_height=SHARP_PREVIEW_MAX_HEIGHT,
+    )
 
 
 def calibrate_image(

@@ -35,7 +35,7 @@ from leaf_processing_core import (
     write_session_data,
 )
 from leaf_processing_image import (
-    build_calibration_preview,
+    build_sharp_calibration_preview,
     clamp_preview_pan,
     make_message_preview,
     picture_processing_from_image,
@@ -478,7 +478,7 @@ class LeafProcessingApp:
 
         try:
             self._load_image_data(image_path)
-            self.preview_image = build_calibration_preview(
+            self.preview_image = build_sharp_calibration_preview(
                 image=self.loaded_image,
                 hsv_image=self.loaded_hsv_image,
                 image_name=image_path.name,
