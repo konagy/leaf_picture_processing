@@ -107,6 +107,17 @@ class OpenCvProcessingApp:
 
     def load_folder(self, input_folder: Path) -> None:
         input_folder = input_folder.resolve()
+
+        # testing todo
+        p = Path(input_folder)
+        print("INPUT:", repr(input_folder))
+        print("PATH:", p)
+        print("RESOLVED:", p.resolve())
+        print("CWD:", Path.cwd())
+        print("EXISTS:", p.exists())
+        print("IS_DIR:", p.is_dir())
+        #
+        
         if not input_folder.exists() or not input_folder.is_dir():
             self.status_text = f"Folder does not exist: {input_folder}"
             return
